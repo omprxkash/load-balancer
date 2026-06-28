@@ -1,0 +1,21 @@
+domain: load-balancer
+descriptors:
+  # Per-host rate limiting: 1000 req/min per virtual host
+  - key: header_match
+    value: host
+    rate_limit:
+      unit: minute
+      requests_per_unit: 1000
+
+  # Per-IP rate limiting: 100 req/min per client IP
+  - key: remote_address
+    rate_limit:
+      unit: minute
+      requests_per_unit: 100
+
+  # Tighter limit for the jira virtual host (example of per-service limit)
+  - key: header_match
+    value: jira.local
+    rate_limit:
+      unit: minute
+      requests_per_unit: 500

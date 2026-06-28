@@ -1,0 +1,87 @@
+{# Renders the main Envoy LDS Listener with HTTP Connection Manager (HCM).
+   The HCM includes the filter chain:
+     access_log → ext_authz → ratelimit → router
+   Routes are inlined here so a separate RDS poll is not required.
+   Variables:
+     services   - list of dicts from DynamoDB
+     global_cfg - dict from S3 global.json
+#}
+"@type": "type.googleapis.com/envoy.config.listener.v3.Listener"
+name: "listener_0"
+address:
+  socket_address:
+    address: "0.0.0.0"
+    port_value: 10000
+filter_chains:
+  - filters:
+      - name: "envoy.filters.network.http_connection_manager"
+        typed_config:
+          "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+          stat_prefix: "ingress_http"
+          codec_type: AUTO
+          {% if global_cfg.access_log_enabled | default(true) %}
+          access_log:
+            - name: "envoy.access_loggers.stdout"
+              typed_config:
+                "@type": "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog"
+                log_format:
+                  json_format:
+                    start_time: "%START_TIME%"
+                    method: "%REQ(:METHOD)%"
+                    path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                    host: "%REQ(:AUTHORITY)%"
+                    response_code: "%RESPONSE_CODE%"
+                    duration_ms: "%DURATION%"
+                    upstream_cluster: "%UPSTREAM_CLUSTER%"
+                    upstream_host: "%UPSTREAM_HOST%"
+                    bytes_sent: "%BYTES_SENT%"
+                    bytes_received: "%BYTES_RECEIVED%"
+          {% endif %}
+          route_config:
+            name: "local_route"
+            virtual_hosts:
+{% for service in services %}
+              - name: "{{ service.backend }}"
+                domains:
+                  - "{{ service.host }}"
+                  - "{{ service.host }}:10000"
+                routes:
+{% for route_prefix in (service.routes | default(["/"])) %}
+                  - match:
+                      prefix: "{{ route_prefix }}"
+                    route:
+                      cluster: "{{ service.backend }}"
+                      timeout: "{{ (service.timeout_ms | default(global_cfg.default_timeout_ms) | default(30000)) / 1000 }}s"
+                      retry_policy:
+                        retry_on: "5xx,reset,connect-failure"
+                        num_retries: {{ service.retry_attempts | default(global_cfg.default_retry_attempts) | default(3) }}
+{% endfor %}
+{% endfor %}
+          http_filters:
+            - name: "envoy.filters.http.ext_authz"
+              typed_config:
+                "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz"
+                http_service:
+                  server_uri:
+                    uri: "http://auth-sidecar:9001"
+                    cluster: "auth_sidecar_cluster"
+                    timeout: 2s
+                  path_prefix: "/check"
+                failure_mode_allow: true
+            - name: "envoy.filters.http.ratelimit"
+              typed_config:
+                "@type": "type.googleapis.com/envoy.extensions.filters.http.ratelimit.v3.RateLimit"
+                domain: "load-balancer"
+                request_type: external
+                stage: 0
+                failure_mode_deny: false
+                rate_limit_service:
+                  grpc_service:
+                    envoy_grpc:
+                      cluster_name: "ratelimit_cluster"
+                  transport_api_version: V3
+            - name: "envoy.filters.http.router"
+              typed_config:
+                "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+          use_remote_address: true
+          xff_num_trusted_hops: 1

@@ -1,0 +1,34 @@
+{# Renders one Envoy RDS RouteConfiguration resource per provisioned service.
+   Each service gets its own virtual host matched on the `host` field.
+   Variables:
+     services   - list of dicts from DynamoDB
+     global_cfg - dict from S3 global.json
+#}
+"@type": "type.googleapis.com/envoy.config.route.v3.RouteConfiguration"
+name: "local_route"
+virtual_hosts:
+{% for service in services %}
+  - name: "{{ service.backend }}"
+    domains:
+      - "{{ service.host }}"
+      - "{{ service.host }}:10000"
+    routes:
+{% for route_prefix in (service.routes | default(["/"])) %}
+      - match:
+          prefix: "{{ route_prefix }}"
+        route:
+          cluster: "{{ service.backend }}"
+          timeout: "{{ (service.timeout_ms | default(global_cfg.default_timeout_ms) | default(30000)) / 1000 }}s"
+          retry_policy:
+            retry_on: "5xx,reset,connect-failure"
+            num_retries: {{ service.retry_attempts | default(global_cfg.default_retry_attempts) | default(3) }}
+        {% if service.auth_required %}
+        typed_per_filter_config:
+          envoy.filters.http.ext_authz:
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute"
+            check_settings:
+              context_extensions:
+                service_id: "{{ service.service_id }}"
+        {% endif %}
+{% endfor %}
+{% endfor %}

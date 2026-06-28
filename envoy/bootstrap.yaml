@@ -1,0 +1,41 @@
+node:
+  id: envoy-proxy-1
+  cluster: proxy-fleet
+
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+dynamic_resources:
+  lds_config:
+    resource_api_version: V3
+    api_config_source:
+      api_type: REST
+      transport_api_version: V3
+      cluster_names: [sovereign]
+      refresh_delay: 5s
+  cds_config:
+    resource_api_version: V3
+    api_config_source:
+      api_type: REST
+      transport_api_version: V3
+      cluster_names: [sovereign]
+      refresh_delay: 5s
+
+static_resources:
+  clusters:
+    - name: sovereign
+      connect_timeout: 5s
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: sovereign
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: sovereign
+                      port_value: 8001

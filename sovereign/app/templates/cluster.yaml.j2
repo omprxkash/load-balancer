@@ -1,0 +1,27 @@
+{# Renders one Envoy CDS Cluster resource per provisioned service.
+   Variables:
+     service   - dict from DynamoDB (backend, host, port, timeout_ms)
+     global_cfg - dict from S3 global.json
+#}
+"@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster"
+name: "{{ service.backend }}"
+connect_timeout: "{{ (service.timeout_ms | default(global_cfg.default_timeout_ms) | default(30000)) / 1000 }}s"
+type: STRICT_DNS
+dns_lookup_family: V4_ONLY
+lb_policy: ROUND_ROBIN
+load_assignment:
+  cluster_name: "{{ service.backend }}"
+  endpoints:
+    - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: "{{ service.backend }}"
+                port_value: {{ service.port | default(80) }}
+health_checks:
+  - timeout: 5s
+    interval: 10s
+    unhealthy_threshold: 3
+    healthy_threshold: 2
+    http_health_check:
+      path: "/health"

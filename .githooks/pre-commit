@@ -1,0 +1,12 @@
+#!/bin/sh
+bad=$(git diff --cached --name-only | grep '\.sh$' | while read -r f; do
+  mode=$(git ls-files --stage -- "$f" | awk '{print $1}')
+  [ "$mode" != "100755" ] && echo "  $f (mode $mode)"
+done)
+if [ -n "$bad" ]; then
+  echo "ERROR: the following shell scripts are staged but not executable:"
+  echo "$bad"
+  echo "Fix with: git update-index --chmod=+x <file>"
+  exit 1
+fi
+exit 0

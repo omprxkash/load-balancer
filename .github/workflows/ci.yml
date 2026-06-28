@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell scripts are executable
+        run: |
+          git ls-files --stage '*.sh' | awk '$1 != "100755" {print $4 " is not executable (mode " $1 ")"}' | grep . && exit 1 || exit 0
+
+  lint-and-test:
+    runs-on: ubuntu-latest
+    needs: check-permissions
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint OSB
+        run: ruff check osb/app/ --select E,F,W
+
+      - name: Lint Sovereign
+        run: ruff check sovereign/app/ --select E,F,W
+
+      - name: Lint Sidecars
+        run: ruff check sidecars/auth/ --select E,F,W
+
+      - name: Install OSB test deps
+        run: pip install -e "osb[dev]"
+
+      - name: Test OSB
+        run: cd osb && python -m pytest tests/ -v --tb=short
+
+      - name: Install Sovereign test deps
+        run: pip install -e "sovereign[dev]"
+
+      - name: Test Sovereign
+        run: cd sovereign && python -m pytest tests/ -v --tb=short
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build OSB image
+        run: docker build -t load-balancer/osb:ci osb/
+
+      - name: Build Sovereign image
+        run: docker build -t load-balancer/sovereign:ci sovereign/
+
+      - name: Build Envoy image
+        run: docker build -t load-balancer/envoy:ci envoy/
+
+      - name: Build auth sidecar image
+        run: docker build -t load-balancer/auth-sidecar:ci sidecars/auth/
+
+      - name: Build backend images
+        run: |
+          docker build -t load-balancer/jira-mock:ci backends/jira-mock/
+          docker build -t load-balancer/confluence-mock:ci backends/confluence-mock/
+          docker build -t load-balancer/bitbucket-mock:ci backends/bitbucket-mock/
+          docker build -t load-balancer/worker:ci worker/
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy env file
+        run: cp .env.example .env
+
+      - name: Start stack
+        run: docker compose up --build -d --wait --wait-timeout 300
+
+      - name: Run smoke tests
+        run: bash scripts/verify.sh
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs

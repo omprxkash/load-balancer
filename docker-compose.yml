@@ -1,0 +1,131 @@
+services:
+
+  # ── AWS services (LocalStack) ─────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3.4
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=dynamodb,sqs,s3,route53,cloudfront
+      - DEFAULT_REGION=us-east-1
+      - EAGER_SERVICE_LOADING=1
+    volumes:
+      - ./infra/localstack/init.sh:/etc/localstack/init/ready.d/init.sh
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Open Service Broker ───────────────────────────────────────────────────
+  osb:
+    build: ./osb
+    ports:
+      - "8080:8080"
+    env_file: .env.example
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/ready')"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  # ── Provisioning Worker ───────────────────────────────────────────────────
+  worker:
+    build: ./worker
+    env_file: .env.example
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+    depends_on:
+      osb:
+        condition: service_healthy
+
+  # ── Sovereign (Envoy xDS Control Plane) ──────────────────────────────────
+  sovereign:
+    build: ./sovereign
+    ports:
+      - "8001:8001"
+    env_file: .env.example
+    environment:
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Auth Sidecar (ext_authz) ──────────────────────────────────────────────
+  auth-sidecar:
+    build: ./sidecars/auth
+    ports:
+      - "9001:9001"
+    env_file: .env.example
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Rate Limit Service (Lyft/Envoy official image) ────────────────────────
+  ratelimit:
+    image: envoyproxy/ratelimit:master
+    command: /bin/ratelimit
+    ports:
+      - "8070:8070"
+      - "8071:8071"
+    environment:
+      - USE_STATSD=false
+      - LOG_LEVEL=debug
+      - REDIS_SOCKET_TYPE=tcp
+      - REDIS_URL=redis:6379
+      - RUNTIME_ROOT=/data
+      - RUNTIME_SUBDIRECTORY=ratelimit
+    volumes:
+      - ./sidecars/ratelimit:/data/ratelimit/config
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # ── Envoy Proxy ───────────────────────────────────────────────────────────
+  envoy:
+    build: ./envoy
+    ports:
+      - "10000:10000"   # proxy traffic
+      - "9901:9901"     # admin interface
+    depends_on:
+      sovereign:
+        condition: service_healthy
+      auth-sidecar:
+        condition: service_healthy
+
+  # ── Mock Backends ─────────────────────────────────────────────────────────
+  jira-mock:
+    build: ./backends/jira-mock
+    ports:
+      - "9010:9010"
+
+  confluence-mock:
+    build: ./backends/confluence-mock
+    ports:
+      - "9011:9011"
+
+  bitbucket-mock:
+    build: ./backends/bitbucket-mock
+    ports:
+      - "9012:9012"
+
+volumes:
+  localstack-data:

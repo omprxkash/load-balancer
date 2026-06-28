@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lb-config
+  namespace: load-balancer
+data:
+  AWS_ACCESS_KEY_ID: "test"
+  AWS_SECRET_ACCESS_KEY: "test"
+  AWS_DEFAULT_REGION: "us-east-1"
+  LOCALSTACK_ENDPOINT: "http://localstack:4566"
+  DYNAMODB_INSTANCES_TABLE: "osb-instances"
+  DYNAMODB_BINDINGS_TABLE: "osb-bindings"
+  DYNAMODB_SERVICES_TABLE: "sovereign-services"
+  SQS_QUEUE_NAME: "osb-provisioning"
+  OSB_USERNAME: "admin"
+  OSB_PASSWORD: "secret"
+  AUTH_SHARED_SECRET: "dev-token-for-testing"
+  SOVEREIGN_POLL_INTERVAL: "5"

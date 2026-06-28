@@ -1,0 +1,75 @@
+---
+# Auth sidecar (ext_authz)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-sidecar
+  namespace: load-balancer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-sidecar
+  template:
+    metadata:
+      labels:
+        app: auth-sidecar
+    spec:
+      containers:
+        - name: auth-sidecar
+          image: load-balancer/auth-sidecar:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9001
+          envFrom:
+            - configMapRef:
+                name: lb-config
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-sidecar
+  namespace: load-balancer
+spec:
+  selector:
+    app: auth-sidecar
+  ports:
+    - port: 9001
+      targetPort: 9001
+---
+# Redis for ratelimit service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: load-balancer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: load-balancer
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379

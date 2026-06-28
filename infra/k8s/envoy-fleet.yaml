@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy
+  namespace: load-balancer
+  labels:
+    app: envoy
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: envoy
+  template:
+    metadata:
+      labels:
+        app: envoy
+    spec:
+      containers:
+        - name: envoy
+          image: load-balancer/envoy:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 10000
+              name: proxy
+            - containerPort: 9901
+              name: admin
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 5
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /server_info
+              port: 9901
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy
+  namespace: load-balancer
+spec:
+  type: LoadBalancer
+  selector:
+    app: envoy
+  ports:
+    - name: proxy
+      port: 10000
+      targetPort: 10000
+    - name: admin
+      port: 9901
+      targetPort: 9901
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: envoy-hpa
+  namespace: load-balancer
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: envoy
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
